@@ -57,6 +57,8 @@ class AIUsageWidget:
         self._show_timer = None
         self._hide_timer = None
         self.sec_dock: tk.Toplevel | None = None
+        self._primary_fs_hidden = False
+        self._sec_fs_hidden = False
 
         self.dock_width = self._compute_dock_width()
         self.dock_height = 30
@@ -103,7 +105,14 @@ class AIUsageWidget:
 
         # Periodic updates
         root.after(100, self._tick)
+        root.after(300, self._fast_dock_tick)
         self.refresh_ai()
+
+    def _fast_dock_tick(self):
+        if self.closing:
+            return
+        self._dock_to_taskbar()
+        self.root.after(350, self._fast_dock_tick)
 
     def _compute_dock_width(self) -> int:
         items = []
@@ -376,6 +385,10 @@ class AIUsageWidget:
 
     def _show_hover_card(self):
         self._show_timer = None
+        if self._primary_fs_hidden and self._sec_fs_hidden:
+            return
+        if not self.root.winfo_viewable() and (not self.sec_dock or not self.sec_dock.winfo_viewable()):
+            return
         is_dock_in = self._dock_hovered or self._is_pointer_inside(self.dock_frame)
         is_sec_in = self._sec_dock_hovered or (self.sec_dock and self._is_pointer_inside(self.sec_dock_frame))
         if not is_dock_in and not is_sec_in:
@@ -433,35 +446,78 @@ class AIUsageWidget:
         self.show_card()
 
     def _dock_to_taskbar(self):
-        info = win.get_tray_info()
-        if not info:
-            return
-        width = self.dock_width
-        height = self.dock_height
-        tray_t = info["tray_rect"][1]
-        tray_h = info["tray_h"]
-        tray_start_l = info.get("tray_start_screen_l", info["notify_screen_l"])
-        # Snap tightly next to the chevron button with a safe 4px margin (no overlap)
-        x = max(10, tray_start_l - width - 4)
-        y = tray_t + max(2, (tray_h - height) // 2)
-
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.root.lift()
-        self.root.attributes("-topmost", True)
-
-        hwnd = None
+        # 1. Detect if any application is running in fullscreen mode
+        our_hwnds = []
         try:
-            frame_str = self.root.wm_frame()
-            if frame_str:
-                hwnd = int(frame_str, 16)
+            if self.root.winfo_exists():
+                h = win.C.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+                our_hwnds.append(h)
+            if self.sec_dock and self.sec_dock.winfo_exists():
+                h = win.C.windll.user32.GetParent(self.sec_dock.winfo_id()) or self.sec_dock.winfo_id()
+                our_hwnds.append(h)
+            if self.hover_card and self.hover_card.winfo_exists():
+                h = win.C.windll.user32.GetParent(self.hover_card.winfo_id()) or self.hover_card.winfo_id()
+                our_hwnds.append(h)
+            if self.card_window and self.card_window.winfo_exists():
+                h = win.C.windll.user32.GetParent(self.card_window.winfo_id()) or self.card_window.winfo_id()
+                our_hwnds.append(h)
         except Exception:
             pass
-        if not hwnd:
-            hwnd = win.C.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
-        win.dock_to_taskbar(hwnd, width=width, height=height)
 
+        primary_fs, secondary_fs = win.check_fullscreen_monitors(our_hwnds)
+
+        # 2. Primary Monitor Fullscreen Auto-hide Handling
+        info = win.get_tray_info()
+        should_hide_primary = primary_fs or not info
+
+        if should_hide_primary:
+            if self.root.winfo_viewable():
+                self._hide_hover_card_now()
+                self.root.withdraw()
+            self._primary_fs_hidden = True
+        else:
+            if self._primary_fs_hidden or not self.root.winfo_viewable():
+                self.root.deiconify()
+                self._primary_fs_hidden = False
+
+            width = self.dock_width
+            height = self.dock_height
+            tray_t = info["tray_rect"][1]
+            tray_h = info["tray_h"]
+            tray_start_l = info.get("tray_start_screen_l", info["notify_screen_l"])
+            x = max(10, tray_start_l - width - 4)
+            y = tray_t + max(2, (tray_h - height) // 2)
+
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+
+            hwnd = None
+            try:
+                frame_str = self.root.wm_frame()
+                if frame_str:
+                    hwnd = int(frame_str, 16)
+            except Exception:
+                pass
+            if not hwnd:
+                hwnd = win.C.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            win.dock_to_taskbar(hwnd, width=width, height=height)
+
+        # 3. Secondary Monitor Fullscreen Auto-hide Handling
         if self.sec_dock:
-            self._dock_secondary_taskbar()
+            sec_info = win.get_secondary_tray_info()
+            should_hide_sec = secondary_fs or not sec_info
+
+            if should_hide_sec:
+                if self.sec_dock.winfo_viewable():
+                    self._hide_hover_card_now()
+                    self.sec_dock.withdraw()
+                self._sec_fs_hidden = True
+            else:
+                if self._sec_fs_hidden or not self.sec_dock.winfo_viewable():
+                    self.sec_dock.deiconify()
+                    self._sec_fs_hidden = False
+                self._dock_secondary_taskbar(sec_info)
 
     def _build_secondary_taskbar_dock(self):
         sec_info = win.get_secondary_tray_info()
@@ -548,15 +604,19 @@ class AIUsageWidget:
         except tk.TclError:
             pass
 
-    def _dock_secondary_taskbar(self):
-        sec_info = win.get_secondary_tray_info()
-        if not sec_info or not self.sec_dock:
+    def _dock_secondary_taskbar(self, sec_info=None):
+        if not self.sec_dock:
+            return
+        if not sec_info:
+            sec_info = win.get_secondary_tray_info()
+        if not sec_info:
             return
         rSec = sec_info["rect"]
         clock_margin = 103
         x = rSec[2] - self.dock_width - clock_margin
         y = rSec[1] + max(2, (sec_info["h"] - self.dock_height) // 2)
 
+        self.sec_dock.geometry(f"{self.dock_width}x{self.dock_height}+{x}+{y}")
         self.sec_dock.lift()
         self.sec_dock.attributes("-topmost", True)
 

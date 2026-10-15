@@ -319,7 +319,7 @@ def get_tray_info():
     attach_to_interactive_desktop()
     user = C.windll.user32
     hTray = user.FindWindowW("Shell_TrayWnd", None)
-    if not hTray:
+    if not hTray or not user.IsWindowVisible(hTray):
         return None
     hNotify = user.FindWindowExW(hTray, 0, "TrayNotifyWnd", None)
 
@@ -332,6 +332,8 @@ def get_tray_info():
     user.GetWindowRect(hTray, C.byref(rTray))
     tray_h = rTray.b - rTray.t
     tray_w = rTray.r - rTray.l
+    if tray_h <= 10 or tray_w <= 10:
+        return None
 
     notify_screen_l = rTray.r - 200
     notify_client_x = tray_w - 200
@@ -434,7 +436,7 @@ def get_secondary_tray_info():
     attach_to_interactive_desktop()
     user = C.windll.user32
     hSec = user.FindWindowW("Shell_SecondaryTrayWnd", None)
-    if not hSec:
+    if not hSec or not user.IsWindowVisible(hSec):
         return None
 
     class RECT(C.Structure):
@@ -444,7 +446,7 @@ def get_secondary_tray_info():
     user.GetWindowRect(hSec, C.byref(rSec))
     sec_w = rSec.r - rSec.l
     sec_h = rSec.b - rSec.t
-    if sec_w <= 0 or sec_h <= 0:
+    if sec_w <= 10 or sec_h <= 10:
         return None
 
     return {
@@ -496,4 +498,103 @@ def dock_to_secondary_taskbar(root_hwnd, width=238, height=30):
 
 def undock_from_taskbar(root_hwnd):
     pass
+
+
+def check_fullscreen_monitors(our_hwnds=()) -> tuple[bool, bool]:
+    """
+    Check if any application is currently in full-screen mode on the primary or secondary monitors.
+    Returns (primary_fullscreen: bool, secondary_fullscreen: bool).
+    When a monitor has a fullscreen window (e.g. YouTube video, media player, game, F11, presentation),
+    the taskbar dock on that monitor should auto-hide so it doesn't float over the content.
+    """
+    attach_to_interactive_desktop()
+    user = C.windll.user32
+
+    class RECT(C.Structure):
+        _fields_ = [("l", C.c_long), ("t", C.c_long), ("r", C.c_long), ("b", C.c_long)]
+
+    class MONITORINFO(C.Structure):
+        _fields_ = [
+            ("cbSize", C.c_ulong),
+            ("rcMonitor", RECT),
+            ("rcWork", RECT),
+            ("dwFlags", C.c_ulong),
+        ]
+
+    monitors: list[dict] = []
+
+    def mon_enum(hMon, hdc, lprc, lparam):
+        mi = MONITORINFO()
+        mi.cbSize = C.sizeof(MONITORINFO)
+        user.GetMonitorInfoW(W.HMONITOR(hMon), C.byref(mi))
+        monitors.append({
+            "hMon": hMon,
+            "rect": (mi.rcMonitor.l, mi.rcMonitor.t, mi.rcMonitor.r, mi.rcMonitor.b),
+            "is_primary": bool(mi.dwFlags & 1),
+        })
+        return 1
+
+    proc_mon = C.WINFUNCTYPE(C.c_int, C.c_void_p, C.c_void_p, C.c_void_p, C.c_long)(mon_enum)
+    user.EnumDisplayMonitors(None, None, proc_mon, 0)
+
+    class Result:
+        primary_fs = False
+        secondary_fs = False
+
+    res = Result()
+    our_set = set()
+    for h in our_hwnds:
+        if h:
+            try:
+                our_set.add(int(h))
+                p = user.GetParent(W.HWND(int(h)))
+                if p:
+                    our_set.add(int(p))
+            except Exception:
+                pass
+
+    def enum_win_proc(hwnd, lparam):
+        ihwnd = int(hwnd)
+        if ihwnd in our_set:
+            return 1
+        if not user.IsWindowVisible(W.HWND(hwnd)) or user.IsIconic(W.HWND(hwnd)):
+            return 1
+
+        cls = C.create_unicode_buffer(256)
+        user.GetClassNameW(W.HWND(hwnd), cls, 256)
+        cname = cls.value
+        # Ignore desktop, shell trays, and core overlays
+        if cname in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"):
+            return 1
+
+        ex_style = user.GetWindowLongW(W.HWND(hwnd), -20)
+        # Skip tool windows
+        if ex_style & 0x00000080:  # WS_EX_TOOLWINDOW
+            return 1
+
+        r = RECT()
+        user.GetWindowRect(W.HWND(hwnd), C.byref(r))
+        w = r.r - r.l
+        h = r.b - r.t
+        if w <= 100 or h <= 100:
+            return 1
+
+        margin = 3  # tolerate up to 3px border/margin
+        for m in monitors:
+            ml, mt, mr, mb = m["rect"]
+            if r.l <= ml + margin and r.t <= mt + margin and r.r >= mr - margin and r.b >= mb - margin:
+                if m["is_primary"]:
+                    res.primary_fs = True
+                else:
+                    res.secondary_fs = True
+
+        if res.primary_fs and res.secondary_fs:
+            return 0  # Stop early if both monitors are full screen
+        return 1
+
+    proc_win = C.WINFUNCTYPE(C.c_int, C.c_void_p, C.c_long)(enum_win_proc)
+    user.EnumWindows(proc_win, 0)
+
+    return res.primary_fs, res.secondary_fs
+
 

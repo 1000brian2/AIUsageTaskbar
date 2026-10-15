@@ -21,7 +21,7 @@ class PROCESS_INFORMATION(C.Structure):
         ('dwProcessId', W.DWORD), ('dwThreadId', W.DWORD)
     ]
 
-def launch():
+def launch(background=True):
     si = STARTUPINFO()
     si.cb = C.sizeof(STARTUPINFO)
     si.lpDesktop = 'WinSta0\\Default'
@@ -42,7 +42,8 @@ def launch():
             else:
                 pythonw = sys.executable
     base = Path(__file__).resolve().parent
-    cmdline = f'"{pythonw}" "{base / "widget.py"}"'
+    bg_flag = " --background" if background else ""
+    cmdline = f'"{pythonw}" "{base / "widget.py"}"{bg_flag}'
     res = kernel.CreateProcessW(
         None, cmdline, None, None, False,
         0x00000008,  # DETACHED_PROCESS
