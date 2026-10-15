@@ -117,13 +117,13 @@ class AIUsageWidget:
     def _compute_dock_width(self) -> int:
         items = []
         if self.show_gpt:
-            items.append(72)
+            items.append(76)
         if self.show_gem:
-            items.append(72)
+            items.append(78)
         if self.show_claude:
-            items.append(72)
+            items.append(78)
         if self.show_ram:
-            items.append(58)
+            items.append(64)
         if not items:
             return 80
         total = sum(items) + max(0, len(items) - 1) * 8 + 12
@@ -196,10 +196,10 @@ class AIUsageWidget:
         added = False
         # GPT
         if self.show_gpt:
-            canvas = tk.Canvas(row, width=20, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
+            canvas = tk.Canvas(row, width=18, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
             canvas.pack(side="left", padx=(0, 2))
-            lbl = self._label(row, "GPT —%", color=self.theme["gpt_color"], size=8, bold=True)
-            lbl.pack(side="left", padx=(0, 3))
+            lbl = self._label(row, "GPT —%", color=self.theme["gpt_color"], size=8, bold=True, padx=0, pady=0)
+            lbl.pack(side="left", padx=(0, 4))
             if is_secondary:
                 self.sec_tb_gpt_canvas = canvas
                 self.sec_tb_gpt_lbl = lbl
@@ -218,12 +218,12 @@ class AIUsageWidget:
         # GEM
         if self.show_gem:
             if added:
-                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=12)
-                div.pack(side="left", padx=(0, 3))
-            canvas = tk.Canvas(row, width=20, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
+                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=11)
+                div.pack(side="left", padx=(0, 4))
+            canvas = tk.Canvas(row, width=18, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
             canvas.pack(side="left", padx=(0, 2))
-            lbl = self._label(row, "GEM —%", color=self.theme["gem_color"], size=8, bold=True)
-            lbl.pack(side="left", padx=(0, 3))
+            lbl = self._label(row, "GEM —%", color=self.theme["gem_color"], size=8, bold=True, padx=0, pady=0)
+            lbl.pack(side="left", padx=(0, 4))
             if is_secondary:
                 self.sec_tb_gem_canvas = canvas
                 self.sec_tb_gem_lbl = lbl
@@ -242,12 +242,12 @@ class AIUsageWidget:
         # Claude
         if self.show_claude:
             if added:
-                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=12)
-                div.pack(side="left", padx=(0, 3))
-            canvas = tk.Canvas(row, width=20, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
+                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=11)
+                div.pack(side="left", padx=(0, 4))
+            canvas = tk.Canvas(row, width=18, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
             canvas.pack(side="left", padx=(0, 2))
-            lbl = self._label(row, "CLD —%", color=self.theme["claude_color"], size=8, bold=True)
-            lbl.pack(side="left", padx=(0, 3))
+            lbl = self._label(row, "CLD —%", color=self.theme["claude_color"], size=8, bold=True, padx=0, pady=0)
+            lbl.pack(side="left", padx=(0, 4))
             if is_secondary:
                 self.sec_tb_claude_canvas = canvas
                 self.sec_tb_claude_lbl = lbl
@@ -266,10 +266,10 @@ class AIUsageWidget:
         # RAM
         if self.show_ram:
             if added:
-                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=12)
-                div.pack(side="left", padx=(0, 3))
-            lbl = self._label(row, "RAM —%", color=self.theme["ram_color"], size=8)
-            lbl.pack(side="left")
+                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=11)
+                div.pack(side="left", padx=(0, 4))
+            lbl = self._label(row, "RAM —%", color=self.theme["ram_color"], size=8, padx=0, pady=0)
+            lbl.pack(side="left", padx=(0, 2))
             if is_secondary:
                 self.sec_tb_ram_lbl = lbl
             else:
@@ -1344,7 +1344,7 @@ class AIUsageWidget:
             support.draw_battery(
                 self.tb_gpt_canvas,
                 rem_gpt,
-                width=20,
+                width=18,
                 height=11,
                 outline_color=self.theme["gpt_color"],
                 green_color=self.theme["gpt_color"],
@@ -1356,7 +1356,7 @@ class AIUsageWidget:
                 support.draw_battery(
                     self.sec_tb_gpt_canvas,
                     rem_gpt,
-                    width=20,
+                    width=18,
                     height=11,
                     outline_color=self.theme["gpt_color"],
                     green_color=self.theme["gpt_color"],
@@ -1369,7 +1369,7 @@ class AIUsageWidget:
             support.draw_battery(
                 self.tb_gem_canvas,
                 rem_gem,
-                width=20,
+                width=18,
                 height=11,
                 outline_color=self.theme["gem_color"],
                 green_color=self.theme["gem_color"],
@@ -1381,7 +1381,7 @@ class AIUsageWidget:
                 support.draw_battery(
                     self.sec_tb_gem_canvas,
                     rem_gem,
-                    width=20,
+                    width=18,
                     height=11,
                     outline_color=self.theme["gem_color"],
                     green_color=self.theme["gem_color"],
@@ -1394,7 +1394,7 @@ class AIUsageWidget:
             support.draw_battery(
                 self.tb_claude_canvas,
                 rem_claude,
-                width=20,
+                width=18,
                 height=11,
                 outline_color=self.theme["claude_color"],
                 green_color=self.theme["claude_color"],
@@ -1406,7 +1406,7 @@ class AIUsageWidget:
                 support.draw_battery(
                     self.sec_tb_claude_canvas,
                     rem_claude,
-                    width=20,
+                    width=18,
                     height=11,
                     outline_color=self.theme["claude_color"],
                     green_color=self.theme["claude_color"],
