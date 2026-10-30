@@ -322,6 +322,8 @@ def get_tray_info():
     if not hTray or not user.IsWindowVisible(hTray):
         return None
     hNotify = user.FindWindowExW(hTray, 0, "TrayNotifyWnd", None)
+    hStart = user.FindWindowExW(hTray, 0, "Start", None)
+    hRebar = user.FindWindowExW(hTray, 0, "ReBarWindow32", None)
 
     class RECT(C.Structure):
         _fields_ = [("l", C.c_long), ("t", C.c_long), ("r", C.c_long), ("b", C.c_long)]
@@ -345,6 +347,36 @@ def get_tray_info():
         user.ScreenToClient(hTray, C.byref(pt))
         notify_client_x = pt.x
 
+    # Detect centered/left-aligned taskbar app icon bounds (Start .. Last App Icon)
+    icons_left = rTray.l + 160
+    rebar_l = icons_left
+    rebar_r = icons_left + 400
+    if hRebar:
+        rRebar = RECT()
+        user.GetWindowRect(hRebar, C.byref(rRebar))
+        if rRebar.r > rRebar.l:
+            rebar_l = rRebar.l
+            rebar_r = rRebar.r
+            icons_left = rebar_l
+    if hStart:
+        rStart = RECT()
+        user.GetWindowRect(hStart, C.byref(rStart))
+        if rStart.r > rStart.l:
+            icons_left = rStart.l
+
+    # On Windows 11 centered taskbar, the entire [Start + Search + TaskView + AppIcons] strip
+    # is centered around the horizontal midpoint of Shell_TrayWnd.
+    if icons_left > rTray.l + 140:
+        sym_right = (rTray.l + rTray.r) - icons_left
+        icons_right = max(rebar_r, min(notify_screen_l - 8, sym_right))
+    else:
+        # Left-aligned taskbar
+        icons_right = min(notify_screen_l - 8, rebar_r + 265)
+
+    left_widget_r = rTray.l + 158
+    avail_right = max(0, notify_screen_l - icons_right - 10)
+    avail_left = max(0, icons_left - left_widget_r - 10)
+
     tray_start_screen_l = notify_screen_l
 
     return {
@@ -356,6 +388,11 @@ def get_tray_info():
         "notify_screen_l": notify_screen_l,
         "tray_start_screen_l": tray_start_screen_l,
         "notify_client_x": notify_client_x,
+        "icons_left": icons_left,
+        "icons_right": icons_right,
+        "left_widget_r": left_widget_r,
+        "avail_right": avail_right,
+        "avail_left": avail_left,
     }
 
 
@@ -388,7 +425,7 @@ def get_window_rect(root_hwnd):
     return r.left, r.top, r.right, r.bottom
 
 
-def dock_to_taskbar(root_hwnd, width=238, height=30):
+def dock_to_taskbar(root_hwnd, width=210, height=30, x=None):
     info = get_tray_info()
     if not info:
         return False, 0, 0, width, height
@@ -398,8 +435,8 @@ def dock_to_taskbar(root_hwnd, width=238, height=30):
     tray_h = info["tray_h"]
     tray_start_l = info.get("tray_start_screen_l", info["notify_screen_l"])
 
-    # Snap tightly right next to the chevron button with a safe 4px margin (no overlap)
-    x = max(10, tray_start_l - width - 4)
+    if x is None:
+        x = max(10, tray_start_l - width - 4)
     y = tray_t + max(2, (tray_h - height) // 2)
 
     # Resolve top-level window handle

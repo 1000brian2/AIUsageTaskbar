@@ -37,6 +37,8 @@ class AIUsageWidget:
         self.show_gem = self.settings.get("show_gem", True)
         self.show_claude = self.settings.get("show_claude", False)
         self.show_ram = self.settings.get("show_ram", True)
+        self.reset_display_mode = self.settings.get("reset_display_mode", "both")
+        self.dock_position = self.settings.get("dock_position", "auto")
 
         self.codex_snapshot: UsageSnapshot | None = None
         self.gemini_snapshot: GeminiSnapshot | None = None
@@ -59,9 +61,11 @@ class AIUsageWidget:
         self.sec_dock: tk.Toplevel | None = None
         self._primary_fs_hidden = False
         self._sec_fs_hidden = False
+        self._compact_level = 0
+        self._rebuilding_dock = False
 
         self.dock_width = self._compute_dock_width()
-        self.dock_height = 30
+        self.dock_height = 28
 
         # ---------------------------------------------------------
         # 1. Root Window = Taskbar Embedded Dock Strip (Photo 3/4)
@@ -115,19 +119,37 @@ class AIUsageWidget:
         self.root.after(350, self._fast_dock_tick)
 
     def _compute_dock_width(self) -> int:
+        if hasattr(self, "dock_frame") and self.dock_frame.winfo_exists():
+            try:
+                self.dock_frame.update_idletasks()
+                req_w = self.dock_frame.winfo_reqwidth()
+                if req_w > 30:
+                    return req_w
+            except Exception:
+                pass
         items = []
         if self.show_gpt:
-            items.append(76)
+            items.append(66)
         if self.show_gem:
-            items.append(78)
+            items.append(68)
         if self.show_claude:
-            items.append(78)
+            items.append(68)
         if self.show_ram:
-            items.append(64)
+            items.append(54)
         if not items:
-            return 80
-        total = sum(items) + max(0, len(items) - 1) * 8 + 12
-        return max(80, total)
+            return 72
+        total = sum(items) + max(0, len(items) - 1) * 5 + 10
+        return max(72, total)
+
+    def _sync_dock_width(self):
+        if hasattr(self, "dock_frame") and self.dock_frame.winfo_exists():
+            try:
+                self.dock_frame.update_idletasks()
+                req_w = self.dock_frame.winfo_reqwidth()
+                if req_w > 30:
+                    self.dock_width = req_w
+            except Exception:
+                pass
 
     def _label(self, parent, text, color=support.COLOR_TEXT, size=9, bold=False, **kw):
         return tk.Label(
@@ -164,8 +186,8 @@ class AIUsageWidget:
         self.dock_frame = tk.Frame(
             self.root,
             bg=self.theme["bg"],
-            padx=5,
-            pady=2,
+            padx=4,
+            pady=1,
             highlightthickness=1,
             highlightbackground=self.theme["border"],
             cursor="hand2",
@@ -193,13 +215,21 @@ class AIUsageWidget:
         row = tk.Frame(parent_frame, bg=self.theme["bg"])
         row.pack(fill="both", expand=True)
 
+        level = 0 if is_secondary else self._compact_level
+        show_batt = (level == 0)
+        has_ai = self.show_gpt or self.show_gem or self.show_claude
+        show_ram_item = self.show_ram and (level < 2 or not has_ai)
+        div_pad = 3 if level == 0 else 2
+
         added = False
         # GPT
         if self.show_gpt:
-            canvas = tk.Canvas(row, width=18, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
-            canvas.pack(side="left", padx=(0, 2))
-            lbl = self._label(row, "GPT —%", color=self.theme["gpt_color"], size=8, bold=True, padx=0, pady=0)
-            lbl.pack(side="left", padx=(0, 4))
+            canvas = None
+            if show_batt:
+                canvas = tk.Canvas(row, width=13, height=10, bg=self.theme["bg"], bd=0, highlightthickness=0)
+                canvas.pack(side="left", padx=(0, 2))
+            lbl = self._label(row, "GPT —%", color=self.theme["gpt_color"], size=8, bold=True, bd=0, padx=0, pady=0)
+            lbl.pack(side="left", padx=0)
             if is_secondary:
                 self.sec_tb_gpt_canvas = canvas
                 self.sec_tb_gpt_lbl = lbl
@@ -218,12 +248,14 @@ class AIUsageWidget:
         # GEM
         if self.show_gem:
             if added:
-                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=11)
-                div.pack(side="left", padx=(0, 4))
-            canvas = tk.Canvas(row, width=18, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
-            canvas.pack(side="left", padx=(0, 2))
-            lbl = self._label(row, "GEM —%", color=self.theme["gem_color"], size=8, bold=True, padx=0, pady=0)
-            lbl.pack(side="left", padx=(0, 4))
+                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=10)
+                div.pack(side="left", padx=div_pad)
+            canvas = None
+            if show_batt:
+                canvas = tk.Canvas(row, width=13, height=10, bg=self.theme["bg"], bd=0, highlightthickness=0)
+                canvas.pack(side="left", padx=(0, 2))
+            lbl = self._label(row, "GEM —%", color=self.theme["gem_color"], size=8, bold=True, bd=0, padx=0, pady=0)
+            lbl.pack(side="left", padx=0)
             if is_secondary:
                 self.sec_tb_gem_canvas = canvas
                 self.sec_tb_gem_lbl = lbl
@@ -242,12 +274,14 @@ class AIUsageWidget:
         # Claude
         if self.show_claude:
             if added:
-                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=11)
-                div.pack(side="left", padx=(0, 4))
-            canvas = tk.Canvas(row, width=18, height=11, bg=self.theme["bg"], bd=0, highlightthickness=0)
-            canvas.pack(side="left", padx=(0, 2))
-            lbl = self._label(row, "CLD —%", color=self.theme["claude_color"], size=8, bold=True, padx=0, pady=0)
-            lbl.pack(side="left", padx=(0, 4))
+                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=10)
+                div.pack(side="left", padx=div_pad)
+            canvas = None
+            if show_batt:
+                canvas = tk.Canvas(row, width=13, height=10, bg=self.theme["bg"], bd=0, highlightthickness=0)
+                canvas.pack(side="left", padx=(0, 2))
+            lbl = self._label(row, "CLD —%", color=self.theme["claude_color"], size=8, bold=True, bd=0, padx=0, pady=0)
+            lbl.pack(side="left", padx=0)
             if is_secondary:
                 self.sec_tb_claude_canvas = canvas
                 self.sec_tb_claude_lbl = lbl
@@ -264,12 +298,12 @@ class AIUsageWidget:
                 self.tb_claude_lbl = None
 
         # RAM
-        if self.show_ram:
+        if show_ram_item:
             if added:
-                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=11)
-                div.pack(side="left", padx=(0, 4))
-            lbl = self._label(row, "RAM —%", color=self.theme["ram_color"], size=8, padx=0, pady=0)
-            lbl.pack(side="left", padx=(0, 2))
+                div = tk.Frame(row, bg=self.theme["divider"], width=1, height=10)
+                div.pack(side="left", padx=div_pad)
+            lbl = self._label(row, "RAM —%", color=self.theme["ram_color"], size=8, bd=0, padx=0, pady=0)
+            lbl.pack(side="left", padx=0)
             if is_secondary:
                 self.sec_tb_ram_lbl = lbl
             else:
@@ -282,6 +316,7 @@ class AIUsageWidget:
 
         if not is_secondary:
             self._bind_dock_recursive(parent_frame, self._popup_menu)
+            self._sync_dock_width()
         else:
             self._bind_sec_dock_recursive(parent_frame, self._popup_menu)
 
@@ -410,15 +445,18 @@ class AIUsageWidget:
                 hover_x = rx
                 hover_y = max(10, ry - hover_h - 6)
         else:
+            rx, ry, rr, _ = win.get_window_rect(self.root.winfo_id())
             info = win.get_tray_info()
             if info:
-                tray_t = info["tray_rect"][1]
-                tray_start_l = info.get("tray_start_screen_l", info["notify_screen_l"])
-                dock_right = tray_start_l - 4
-                hover_x = max(10, dock_right - hover_w)
+                tray_l, tray_t, tray_r, _ = info["tray_rect"]
+                # Align hover card above the actual dock strip (whether placed right or left)
+                if rr > 0 and rx > 0:
+                    hover_x = max(tray_l + 10, min(tray_r - hover_w - 10, rr - hover_w))
+                else:
+                    tray_start_l = info.get("tray_start_screen_l", info["notify_screen_l"])
+                    hover_x = max(tray_l + 10, tray_start_l - 4 - hover_w)
                 hover_y = max(10, tray_t - hover_h - 6)
             else:
-                rx, ry, _, _ = win.get_window_rect(self.root.winfo_id())
                 hover_x = rx
                 hover_y = max(10, ry - hover_h - 6)
 
@@ -445,6 +483,28 @@ class AIUsageWidget:
         self._hide_hover_card_now()
         self.show_card()
 
+    def _estimate_level_widths(self) -> tuple[int, int, int]:
+        """Return estimated dock widths (w0_full, w1_no_batt, w2_mini) based on current measured width."""
+        self._sync_dock_width()
+        cur_w = self.dock_width
+        batt_count = int(self.show_gpt) + int(self.show_gem) + int(self.show_claude)
+        batt_delta = batt_count * 15
+        ram_delta = 48 if (self.show_ram and batt_count > 0) else 0
+
+        if self._compact_level == 0:
+            w0 = cur_w
+            w1 = max(60, w0 - batt_delta)
+            w2 = max(60, w1 - ram_delta)
+        elif self._compact_level == 1:
+            w1 = cur_w
+            w0 = w1 + batt_delta
+            w2 = max(60, w1 - ram_delta)
+        else:
+            w2 = cur_w
+            w1 = w2 + ram_delta
+            w0 = w1 + batt_delta
+        return w0, w1, w2
+
     def _dock_to_taskbar(self):
         # 1. Detect if any application is running in fullscreen mode
         our_hwnds = []
@@ -466,7 +526,7 @@ class AIUsageWidget:
 
         primary_fs, secondary_fs = win.check_fullscreen_monitors(our_hwnds)
 
-        # 2. Primary Monitor Fullscreen Auto-hide Handling
+        # 2. Primary Monitor Fullscreen Auto-hide & Anti-Overlap Handling
         info = win.get_tray_info()
         should_hide_primary = primary_fs or not info
 
@@ -480,12 +540,71 @@ class AIUsageWidget:
                 self.root.deiconify()
                 self._primary_fs_hidden = False
 
+            w0, w1, w2 = self._estimate_level_widths()
+            avail_right = info.get("avail_right", 300)
+            avail_left = info.get("avail_left", 300)
+            icons_left = info.get("icons_left", 500)
+            icons_right = info.get("icons_right", 1200)
+            left_widget_r = info.get("left_widget_r", 158)
+            tray_start_l = info.get("tray_start_screen_l", info["notify_screen_l"])
+
+            # Hysteresis margin (4px) when expanding to prevent oscillation
+            hyst0 = 4 if self._compact_level > 0 else 0
+            hyst1 = 4 if self._compact_level > 1 else 0
+
+            if self.dock_position == "left":
+                desired_level = 0
+                place_side = "left"
+            elif self.dock_position == "right":
+                place_side = "right"
+                if avail_right >= w0 + hyst0:
+                    desired_level = 0
+                elif avail_right >= w1 + hyst1:
+                    desired_level = 1
+                else:
+                    desired_level = 2
+            else:
+                # Auto mode: prefer right side, compact if slightly tight, move to left of Start if crowded
+                if avail_right >= w0 + hyst0:
+                    desired_level = 0
+                    place_side = "right"
+                elif avail_right >= w1 + hyst1:
+                    desired_level = 1
+                    place_side = "right"
+                elif avail_right >= w2:
+                    desired_level = 2
+                    place_side = "right"
+                elif avail_left >= w0:
+                    desired_level = 0
+                    place_side = "left"
+                elif avail_left >= w1:
+                    desired_level = 1
+                    place_side = "left"
+                else:
+                    desired_level = 2
+                    place_side = "right"
+
+            if desired_level != self._compact_level and not self._rebuilding_dock:
+                self._rebuilding_dock = True
+                try:
+                    self._compact_level = desired_level
+                    for child in self.dock_frame.winfo_children():
+                        child.destroy()
+                    self._populate_dock_items(self.dock_frame, is_secondary=False)
+                    self._update_ui()
+                finally:
+                    self._rebuilding_dock = False
+
+            self._sync_dock_width()
             width = self.dock_width
             height = self.dock_height
             tray_t = info["tray_rect"][1]
             tray_h = info["tray_h"]
-            tray_start_l = info.get("tray_start_screen_l", info["notify_screen_l"])
-            x = max(10, tray_start_l - width - 4)
+
+            if place_side == "left":
+                x = max(left_widget_r, icons_left - width - 6)
+            else:
+                x = max(icons_right + 6, tray_start_l - width - 4)
             y = tray_t + max(2, (tray_h - height) // 2)
 
             self.root.geometry(f"{width}x{height}+{x}+{y}")
@@ -501,7 +620,7 @@ class AIUsageWidget:
                 pass
             if not hwnd:
                 hwnd = win.C.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
-            win.dock_to_taskbar(hwnd, width=width, height=height)
+            win.dock_to_taskbar(hwnd, width=width, height=height, x=x)
 
         # 3. Secondary Monitor Fullscreen Auto-hide Handling
         if self.sec_dock:
@@ -537,8 +656,8 @@ class AIUsageWidget:
         self.sec_dock_frame = tk.Frame(
             self.sec_dock,
             bg=self.theme["bg"],
-            padx=5,
-            pady=2,
+            padx=4,
+            pady=1,
             highlightthickness=1,
             highlightbackground=self.theme["border"],
             cursor="hand2",
@@ -548,7 +667,7 @@ class AIUsageWidget:
         self._populate_dock_items(self.sec_dock_frame, is_secondary=True)
 
     def _rebuild_dock(self):
-        self.dock_width = self._compute_dock_width()
+        self._compact_level = 0
         for child in self.dock_frame.winfo_children():
             child.destroy()
         self._populate_dock_items(self.dock_frame, is_secondary=False)
@@ -1176,18 +1295,25 @@ class AIUsageWidget:
         rem_gpt = None
         rem_gem = None
         rem_claude = None
+        gpt_5h_reset = None
+        gem_5h_reset = None
+        cld_5h_reset = None
+        rmode = self.reset_display_mode
 
         # 1. Update Codex / GPT
         if self.codex_snapshot and self.codex_snapshot.primary:
             rem = self.codex_snapshot.primary.remaining_percent
             used = self.codex_snapshot.primary.used_percent
             rem_gpt = rem
+            gpt_5h_reset = self.codex_snapshot.primary.resets_at
             self.gpt_5h_row["pct"].configure(
                 text=f"남음 {int(rem)}% · 사용 {int(used)}%",
                 fg=support.battery_color(rem),
             )
             self._render_bar(self.gpt_5h_row["bar"], rem)
-            self.gpt_5h_row["reset"].configure(text=support.format_reset_time(self.codex_snapshot.primary.resets_at, lang=self.lang))
+            self.gpt_5h_row["reset"].configure(
+                text=support.format_reset_time(gpt_5h_reset, lang=self.lang, mode=rmode)
+            )
 
             support.draw_battery(self.gpt_batt_canvas, rem)
             self.gpt_batt_lbl.configure(text=f"GPT {int(rem)}%", fg=support.battery_color(rem))
@@ -1195,7 +1321,9 @@ class AIUsageWidget:
             # Hover card Codex 5H
             self.hover_gpt_5h["pct"].configure(text=f"남음 {int(rem)}% (사용 {int(used)}%)", fg=self.theme["gpt_color"])
             self._render_custom_bar(self.hover_gpt_5h["bar"], rem, self.theme["gpt_color"])
-            self.hover_gpt_5h["reset"].configure(text=support.format_reset_time(self.codex_snapshot.primary.resets_at, lang=self.lang))
+            self.hover_gpt_5h["reset"].configure(
+                text=support.format_reset_time(gpt_5h_reset, lang=self.lang, mode=rmode)
+            )
 
         if self.codex_snapshot and self.codex_snapshot.secondary:
             rem = self.codex_snapshot.secondary.remaining_percent
@@ -1205,12 +1333,16 @@ class AIUsageWidget:
                 fg=support.battery_color(rem),
             )
             self._render_bar(self.gpt_wk_row["bar"], rem)
-            self.gpt_wk_row["reset"].configure(text=support.format_reset_time(self.codex_snapshot.secondary.resets_at, lang=self.lang))
+            self.gpt_wk_row["reset"].configure(
+                text=support.format_reset_time(self.codex_snapshot.secondary.resets_at, lang=self.lang, mode=rmode)
+            )
 
             # Hover card Codex WK
             self.hover_gpt_wk["pct"].configure(text=f"남음 {int(rem)}% (사용 {int(used)}%)", fg=self.theme["gpt_color"])
             self._render_custom_bar(self.hover_gpt_wk["bar"], rem, self.theme["gpt_color"])
-            self.hover_gpt_wk["reset"].configure(text=support.format_reset_time(self.codex_snapshot.secondary.resets_at, lang=self.lang))
+            self.hover_gpt_wk["reset"].configure(
+                text=support.format_reset_time(self.codex_snapshot.secondary.resets_at, lang=self.lang, mode=rmode)
+            )
 
         if self.codex_snapshot:
             plan_str = self.codex_snapshot.plan.capitalize() if self.codex_snapshot.plan else "Plus"
@@ -1222,12 +1354,15 @@ class AIUsageWidget:
             rem = self.gemini_snapshot.five_hour.remaining_percent
             used = self.gemini_snapshot.five_hour.used_percent
             rem_gem = rem
+            gem_5h_reset = self.gemini_snapshot.five_hour.resets_at_ts
             self.gem_5h_row["pct"].configure(
                 text=f"남음 {int(rem)}% · 사용 {int(used)}%",
                 fg=support.battery_color(rem),
             )
             self._render_bar(self.gem_5h_row["bar"], rem)
-            self.gem_5h_row["reset"].configure(text=support.format_reset_time(self.gemini_snapshot.five_hour.resets_at_ts, lang=self.lang))
+            self.gem_5h_row["reset"].configure(
+                text=support.format_reset_time(gem_5h_reset, lang=self.lang, mode=rmode)
+            )
 
             support.draw_battery(self.gem_batt_canvas, rem)
             self.gem_batt_lbl.configure(text=f"GEM {int(rem)}%", fg=support.battery_color(rem))
@@ -1235,7 +1370,9 @@ class AIUsageWidget:
             # Hover card Gemini 5H
             self.hover_gem_5h["pct"].configure(text=f"남음 {int(rem)}% (사용 {int(used)}%)", fg=self.theme["gem_color"])
             self._render_custom_bar(self.hover_gem_5h["bar"], rem, self.theme["gem_color"])
-            self.hover_gem_5h["reset"].configure(text=support.format_reset_time(self.gemini_snapshot.five_hour.resets_at_ts, lang=self.lang))
+            self.hover_gem_5h["reset"].configure(
+                text=support.format_reset_time(gem_5h_reset, lang=self.lang, mode=rmode)
+            )
 
         if self.gemini_snapshot and self.gemini_snapshot.weekly:
             rem = self.gemini_snapshot.weekly.remaining_percent
@@ -1245,12 +1382,16 @@ class AIUsageWidget:
                 fg=support.battery_color(rem),
             )
             self._render_bar(self.gem_wk_row["bar"], rem)
-            self.gem_wk_row["reset"].configure(text=support.format_reset_time(self.gemini_snapshot.weekly.resets_at_ts, lang=self.lang))
+            self.gem_wk_row["reset"].configure(
+                text=support.format_reset_time(self.gemini_snapshot.weekly.resets_at_ts, lang=self.lang, mode=rmode)
+            )
 
             # Hover card Gemini WK
             self.hover_gem_wk["pct"].configure(text=f"남음 {int(rem)}% (사용 {int(used)}%)", fg=self.theme["gem_color"])
             self._render_custom_bar(self.hover_gem_wk["bar"], rem, self.theme["gem_color"])
-            self.hover_gem_wk["reset"].configure(text=support.format_reset_time(self.gemini_snapshot.weekly.resets_at_ts, lang=self.lang))
+            self.hover_gem_wk["reset"].configure(
+                text=support.format_reset_time(self.gemini_snapshot.weekly.resets_at_ts, lang=self.lang, mode=rmode)
+            )
 
         if self.gemini_snapshot:
             plan_str = self.gemini_snapshot.plan or "Google AI Pro"
@@ -1262,12 +1403,15 @@ class AIUsageWidget:
             rem = self.claude_snapshot.five_hour.remaining_percent
             used = self.claude_snapshot.five_hour.used_percent
             rem_claude = rem
+            cld_5h_reset = self.claude_snapshot.five_hour.resets_at_ts
             self.claude_5h_row["pct"].configure(
                 text=f"남음 {int(rem)}% · 사용 {int(used)}%",
                 fg=support.battery_color(rem),
             )
             self._render_bar(self.claude_5h_row["bar"], rem)
-            self.claude_5h_row["reset"].configure(text=support.format_reset_time(self.claude_snapshot.five_hour.resets_at_ts, lang=self.lang))
+            self.claude_5h_row["reset"].configure(
+                text=support.format_reset_time(cld_5h_reset, lang=self.lang, mode=rmode)
+            )
 
             if self.show_claude:
                 support.draw_battery(self.claude_batt_canvas, rem)
@@ -1276,7 +1420,9 @@ class AIUsageWidget:
             # Hover card Claude 5H
             self.hover_claude_5h["pct"].configure(text=f"남음 {int(rem)}% (사용 {int(used)}%)", fg=self.theme["claude_color"])
             self._render_custom_bar(self.hover_claude_5h["bar"], rem, self.theme["claude_color"])
-            self.hover_claude_5h["reset"].configure(text=support.format_reset_time(self.claude_snapshot.five_hour.resets_at_ts, lang=self.lang))
+            self.hover_claude_5h["reset"].configure(
+                text=support.format_reset_time(cld_5h_reset, lang=self.lang, mode=rmode)
+            )
 
         if self.claude_snapshot and self.claude_snapshot.weekly:
             rem = self.claude_snapshot.weekly.remaining_percent
@@ -1286,12 +1432,16 @@ class AIUsageWidget:
                 fg=support.battery_color(rem),
             )
             self._render_bar(self.claude_wk_row["bar"], rem)
-            self.claude_wk_row["reset"].configure(text=support.format_reset_time(self.claude_snapshot.weekly.resets_at_ts, lang=self.lang))
+            self.claude_wk_row["reset"].configure(
+                text=support.format_reset_time(self.claude_snapshot.weekly.resets_at_ts, lang=self.lang, mode=rmode)
+            )
 
             # Hover card Claude WK
             self.hover_claude_wk["pct"].configure(text=f"남음 {int(rem)}% (사용 {int(used)}%)", fg=self.theme["claude_color"])
             self._render_custom_bar(self.hover_claude_wk["bar"], rem, self.theme["claude_color"])
-            self.hover_claude_wk["reset"].configure(text=support.format_reset_time(self.claude_snapshot.weekly.resets_at_ts, lang=self.lang))
+            self.hover_claude_wk["reset"].configure(
+                text=support.format_reset_time(self.claude_snapshot.weekly.resets_at_ts, lang=self.lang, mode=rmode)
+            )
 
         if self.claude_snapshot:
             plan_str = self.claude_snapshot.plan or "Claude Pro"
@@ -1300,9 +1450,9 @@ class AIUsageWidget:
 
         # 3. Consumption Tracker (Burn Rate & Forecast)
         self.tracker.record(rem_gpt, rem_gem, rem_claude)
-        gpt_m = self.tracker.get_metrics("gpt")
-        gem_m = self.tracker.get_metrics("gemini")
-        cld_m = self.tracker.get_metrics("claude")
+        gpt_m = self.tracker.get_metrics("gpt", reset_ts=gpt_5h_reset, lang=self.lang)
+        gem_m = self.tracker.get_metrics("gemini", reset_ts=gem_5h_reset, lang=self.lang)
+        cld_m = self.tracker.get_metrics("claude", reset_ts=cld_5h_reset, lang=self.lang)
 
         self.hover_gpt_speed_lbl.configure(text=f"⚡ {gpt_m['speed_label']}", fg=gpt_m["speed_color"])
         self.hover_gpt_forecast_lbl.configure(text=gpt_m["forecast_label"])
@@ -1340,85 +1490,99 @@ class AIUsageWidget:
             )
 
         # 5. Update Taskbar Dock Widget (Simplified, distinct brand colors)
-        if rem_gpt is not None and self.tb_gpt_canvas:
-            support.draw_battery(
-                self.tb_gpt_canvas,
-                rem_gpt,
-                width=18,
-                height=11,
-                outline_color=self.theme["gpt_color"],
-                green_color=self.theme["gpt_color"],
-                yellow_color=self.theme["battery_yellow"],
-                red_color=self.theme["battery_red"],
-            )
-            self.tb_gpt_lbl.configure(text=f"GPT {int(rem_gpt)}%", fg=self.theme["gpt_color"])
-            if self.sec_dock and self.sec_tb_gpt_canvas:
+        if rem_gpt is not None:
+            if self.tb_gpt_canvas:
                 support.draw_battery(
-                    self.sec_tb_gpt_canvas,
+                    self.tb_gpt_canvas,
                     rem_gpt,
-                    width=18,
-                    height=11,
+                    width=13,
+                    height=10,
                     outline_color=self.theme["gpt_color"],
                     green_color=self.theme["gpt_color"],
                     yellow_color=self.theme["battery_yellow"],
                     red_color=self.theme["battery_red"],
                 )
-                self.sec_tb_gpt_lbl.configure(text=f"GPT {int(rem_gpt)}%", fg=self.theme["gpt_color"])
+            if self.tb_gpt_lbl:
+                self.tb_gpt_lbl.configure(text=f"GPT {int(rem_gpt)}%", fg=self.theme["gpt_color"])
+            if self.sec_dock:
+                if self.sec_tb_gpt_canvas:
+                    support.draw_battery(
+                        self.sec_tb_gpt_canvas,
+                        rem_gpt,
+                        width=13,
+                        height=10,
+                        outline_color=self.theme["gpt_color"],
+                        green_color=self.theme["gpt_color"],
+                        yellow_color=self.theme["battery_yellow"],
+                        red_color=self.theme["battery_red"],
+                    )
+                if self.sec_tb_gpt_lbl:
+                    self.sec_tb_gpt_lbl.configure(text=f"GPT {int(rem_gpt)}%", fg=self.theme["gpt_color"])
 
-        if rem_gem is not None and self.tb_gem_canvas:
-            support.draw_battery(
-                self.tb_gem_canvas,
-                rem_gem,
-                width=18,
-                height=11,
-                outline_color=self.theme["gem_color"],
-                green_color=self.theme["gem_color"],
-                yellow_color=self.theme["battery_yellow"],
-                red_color=self.theme["battery_red"],
-            )
-            self.tb_gem_lbl.configure(text=f"GEM {int(rem_gem)}%", fg=self.theme["gem_color"])
-            if self.sec_dock and self.sec_tb_gem_canvas:
+        if rem_gem is not None:
+            if self.tb_gem_canvas:
                 support.draw_battery(
-                    self.sec_tb_gem_canvas,
+                    self.tb_gem_canvas,
                     rem_gem,
-                    width=18,
-                    height=11,
+                    width=13,
+                    height=10,
                     outline_color=self.theme["gem_color"],
                     green_color=self.theme["gem_color"],
                     yellow_color=self.theme["battery_yellow"],
                     red_color=self.theme["battery_red"],
                 )
-                self.sec_tb_gem_lbl.configure(text=f"GEM {int(rem_gem)}%", fg=self.theme["gem_color"])
+            if self.tb_gem_lbl:
+                self.tb_gem_lbl.configure(text=f"GEM {int(rem_gem)}%", fg=self.theme["gem_color"])
+            if self.sec_dock:
+                if self.sec_tb_gem_canvas:
+                    support.draw_battery(
+                        self.sec_tb_gem_canvas,
+                        rem_gem,
+                        width=13,
+                        height=10,
+                        outline_color=self.theme["gem_color"],
+                        green_color=self.theme["gem_color"],
+                        yellow_color=self.theme["battery_yellow"],
+                        red_color=self.theme["battery_red"],
+                    )
+                if self.sec_tb_gem_lbl:
+                    self.sec_tb_gem_lbl.configure(text=f"GEM {int(rem_gem)}%", fg=self.theme["gem_color"])
 
-        if rem_claude is not None and self.tb_claude_canvas:
-            support.draw_battery(
-                self.tb_claude_canvas,
-                rem_claude,
-                width=18,
-                height=11,
-                outline_color=self.theme["claude_color"],
-                green_color=self.theme["claude_color"],
-                yellow_color=self.theme["battery_yellow"],
-                red_color=self.theme["battery_red"],
-            )
-            self.tb_claude_lbl.configure(text=f"CLD {int(rem_claude)}%", fg=self.theme["claude_color"])
-            if self.sec_dock and self.sec_tb_claude_canvas:
+        if rem_claude is not None:
+            if self.tb_claude_canvas:
                 support.draw_battery(
-                    self.sec_tb_claude_canvas,
+                    self.tb_claude_canvas,
                     rem_claude,
-                    width=18,
-                    height=11,
+                    width=13,
+                    height=10,
                     outline_color=self.theme["claude_color"],
                     green_color=self.theme["claude_color"],
                     yellow_color=self.theme["battery_yellow"],
                     red_color=self.theme["battery_red"],
                 )
-                self.sec_tb_claude_lbl.configure(text=f"CLD {int(rem_claude)}%", fg=self.theme["claude_color"])
+            if self.tb_claude_lbl:
+                self.tb_claude_lbl.configure(text=f"CLD {int(rem_claude)}%", fg=self.theme["claude_color"])
+            if self.sec_dock:
+                if self.sec_tb_claude_canvas:
+                    support.draw_battery(
+                        self.sec_tb_claude_canvas,
+                        rem_claude,
+                        width=13,
+                        height=10,
+                        outline_color=self.theme["claude_color"],
+                        green_color=self.theme["claude_color"],
+                        yellow_color=self.theme["battery_yellow"],
+                        red_color=self.theme["battery_red"],
+                    )
+                if self.sec_tb_claude_lbl:
+                    self.sec_tb_claude_lbl.configure(text=f"CLD {int(rem_claude)}%", fg=self.theme["claude_color"])
 
         if self.sys_snapshot and self.tb_ram_lbl:
             self.tb_ram_lbl.configure(text=f"RAM {self.sys_snapshot.ram_percent}%", fg=self.theme["ram_color"])
             if self.sec_dock and self.sec_tb_ram_lbl:
                 self.sec_tb_ram_lbl.configure(text=f"RAM {self.sys_snapshot.ram_percent}%", fg=self.theme["ram_color"])
+
+        self._sync_dock_width()
 
     def _tick(self):
         # 1. IPC events
@@ -1557,6 +1721,46 @@ class AIUsageWidget:
         )
         cb_interval.pack(side="right")
 
+        # Reset Time Display Mode
+        row_rmode = tk.Frame(gen_frame, bg=self.theme["bg"])
+        row_rmode.pack(fill="x", pady=4)
+        self._label(row_rmode, "리셋 표시 방식", color=self.theme["text"], size=9).pack(side="left")
+        rmode_map = {
+            "리셋 시각 + 남은 시간 (추천)": "both",
+            "리셋 시각만 표시": "time_only",
+            "남은 시간만 표시": "remaining_only",
+        }
+        rmode_rev = {v: k for k, v in rmode_map.items()}
+        var_rmode_str = tk.StringVar(value=rmode_rev.get(self.reset_display_mode, "리셋 시각 + 남은 시간 (추천)"))
+        cb_rmode = ttk.Combobox(
+            row_rmode,
+            textvariable=var_rmode_str,
+            values=list(rmode_map.keys()),
+            state="readonly",
+            width=22,
+        )
+        cb_rmode.pack(side="right")
+
+        # Taskbar Dock Position
+        row_dpos = tk.Frame(gen_frame, bg=self.theme["bg"])
+        row_dpos.pack(fill="x", pady=2)
+        self._label(row_dpos, "작업 표시줄 위치", color=self.theme["text"], size=9).pack(side="left")
+        dpos_map = {
+            "자동 (아이콘 침범 방지)": "auto",
+            "우측 고정 (시스템 트레이 옆)": "right",
+            "좌측 고정 (시작 버튼 왼쪽)": "left",
+        }
+        dpos_rev = {v: k for k, v in dpos_map.items()}
+        var_dpos_str = tk.StringVar(value=dpos_rev.get(self.dock_position, "자동 (아이콘 침범 방지)"))
+        cb_dpos = ttk.Combobox(
+            row_dpos,
+            textvariable=var_dpos_str,
+            values=list(dpos_map.keys()),
+            state="readonly",
+            width=22,
+        )
+        cb_dpos.pack(side="right")
+
         # --- Section 2: Display Items (Dock Customization) ---
         items_frame = tk.LabelFrame(
             frame,
@@ -1660,6 +1864,8 @@ class AIUsageWidget:
             new_lang = lang_map.get(var_lang_str.get(), "ko")
             new_theme = theme_map.get(var_theme_str.get(), "system")
             new_interval = int(var_interval.get())
+            new_rmode = rmode_map.get(var_rmode_str.get(), "both")
+            new_dpos = dpos_map.get(var_dpos_str.get(), "auto")
             new_show_gpt = var_show_gpt.get()
             new_show_gem = var_show_gem.get()
             new_show_claude = var_show_claude.get()
@@ -1672,6 +1878,8 @@ class AIUsageWidget:
             self.settings["language"] = new_lang
             self.settings["theme"] = new_theme
             self.settings["refresh_minutes"] = new_interval
+            self.settings["reset_display_mode"] = new_rmode
+            self.settings["dock_position"] = new_dpos
             self.settings["show_gpt"] = new_show_gpt
             self.settings["show_gem"] = new_show_gem
             self.settings["show_claude"] = new_show_claude
@@ -1684,6 +1892,8 @@ class AIUsageWidget:
             self.lang = new_lang
             self.theme_mode = new_theme
             self.theme = support.get_dock_theme(self.theme_mode)
+            self.reset_display_mode = new_rmode
+            self.dock_position = new_dpos
             self.show_gpt = new_show_gpt
             self.show_gem = new_show_gem
             self.show_claude = new_show_claude

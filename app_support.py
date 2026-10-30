@@ -1,5 +1,6 @@
 """Helper functions, styling, battery rendering and settings for AI & PC Taskbar."""
 from __future__ import annotations
+from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,8 @@ def load_settings() -> dict[str, Any]:
         "show_gem": True,
         "show_claude": False,
         "show_ram": True,
+        "reset_display_mode": "both",
+        "dock_position": "auto",
     }
     try:
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
@@ -62,22 +65,78 @@ def battery_color(percent: float | None) -> str:
         return COLOR_RED
 
 
-def format_reset_time(timestamp: float | None, lang: str = "ko") -> str:
+def format_clock_time(timestamp: float, lang: str = "ko") -> str:
+    """Format a Unix timestamp into a concise local reset clock string."""
+    dt = datetime.fromtimestamp(timestamp)
+    now_dt = datetime.now()
+    day_diff = (dt.date() - now_dt.date()).days
+
+    if lang == "en":
+        h12 = dt.hour % 12 or 12
+        ampm = "AM" if dt.hour < 12 else "PM"
+        t_str = f"{h12}:{dt.minute:02d} {ampm}"
+        if day_diff == 0:
+            return t_str
+        elif day_diff == 1:
+            return f"Tomorrow {t_str}"
+        else:
+            return f"{dt.strftime('%b %d (%a)')} {t_str}"
+    else:
+        ampm = "오전" if dt.hour < 12 else "오후"
+        h12 = dt.hour % 12 or 12
+        t_str = f"{ampm} {h12}:{dt.minute:02d}"
+        if day_diff == 0:
+            return t_str
+        elif day_diff == 1:
+            return f"내일 {t_str}"
+        else:
+            weekdays_ko = ("월", "화", "수", "목", "금", "토", "일")
+            wd = weekdays_ko[dt.weekday()]
+            return f"{dt.month}/{dt.day}({wd}) {t_str}"
+
+
+def format_reset_time(timestamp: float | None, lang: str = "ko", mode: str = "both") -> str:
     from i18n import t
     if timestamp is None:
         return t("reset_no_info", lang=lang)
     seconds = max(0, int(timestamp - time.time()))
     if seconds == 0:
         return t("reset_complete", lang=lang)
+
     days, rem = divmod(seconds, 86400)
     hours, rem = divmod(rem, 3600)
     mins = max(1, rem // 60)
-    if days > 0:
-        return t("reset_in_days", lang=lang, days=days, hours=hours)
-    elif hours > 0:
-        return t("reset_in_hours", lang=lang, hours=hours, mins=mins)
+
+    clock_str = format_clock_time(timestamp, lang=lang)
+
+    if lang == "en":
+        if days > 0:
+            rem_str = f"{days}d {hours}h left"
+        elif hours > 0:
+            rem_str = f"{hours}h {mins}m left"
+        else:
+            rem_str = f"{mins}m left"
+
+        if mode == "time_only":
+            return f"↻ Resets {clock_str}"
+        elif mode == "remaining_only":
+            return f"↻ {rem_str}"
+        else:
+            return f"↻ Resets {clock_str} ({rem_str})"
     else:
-        return t("reset_in_mins", lang=lang, mins=mins)
+        if days > 0:
+            rem_str = f"{days}일 {hours}시간 남음"
+        elif hours > 0:
+            rem_str = f"{hours}시간 {mins}분 남음"
+        else:
+            rem_str = f"{mins}분 남음"
+
+        if mode == "time_only":
+            return f"↻ {clock_str} 리셋"
+        elif mode == "remaining_only":
+            return f"↻ {rem_str}"
+        else:
+            return f"↻ {clock_str} 리셋 ({rem_str})"
 
 
 def is_light_theme() -> bool:
@@ -186,7 +245,7 @@ class ConsumptionTracker:
         cutoff = now - 3600
         self.samples = [s for s in self.samples if s[0] >= cutoff]
 
-    def get_metrics(self, model: str = "gpt") -> dict[str, Any]:
+    def get_metrics(self, model: str = "gpt", reset_ts: float | None = None, lang: str = "ko") -> dict[str, Any]:
         """Return burn rate (%/h), speed label, speed color, and burn forecast."""
         if model == "gpt":
             idx = 1
@@ -195,13 +254,20 @@ class ConsumptionTracker:
         else:
             idx = 3
         valid = [s for s in self.samples if len(s) > idx and s[idx] is not None]
+        reset_clock = format_clock_time(reset_ts, lang=lang) if reset_ts else None
+
         if len(valid) < 2:
+            f_lbl = (
+                f"{reset_clock} 리셋 · 소진 위험 없음"
+                if reset_clock
+                else "데이터 수집 중 · 소진 위험 없음"
+            )
             return {
                 "burn_rate": 0.0,
                 "burn_rate_str": "측정 중",
                 "speed_label": "소비 속도 측정 중 (안정)",
                 "speed_color": "#10B981",
-                "forecast_label": "데이터 수집 중 · 소진 위험 없음",
+                "forecast_label": f_lbl,
                 "is_fast": False,
             }
 
@@ -210,12 +276,17 @@ class ConsumptionTracker:
         dt_hours = (last_time - first_time) / 3600.0
 
         if dt_hours < (20.0 / 3600.0):
+            f_lbl = (
+                f"{reset_clock} 리셋까지 충분 (소진 위험 없음)"
+                if reset_clock
+                else "초기화 시각까지 충분 (소진 위험 없음)"
+            )
             return {
                 "burn_rate": 0.0,
                 "burn_rate_str": "0.0%/h",
                 "speed_label": "소비 속도: 안정적 (최저 소비)",
                 "speed_color": "#10B981",
-                "forecast_label": "초기화 시각까지 충분 (소진 위험 없음)",
+                "forecast_label": f_lbl,
                 "is_fast": False,
             }
 
@@ -225,25 +296,38 @@ class ConsumptionTracker:
         if burn_rate <= 1.0:
             speed_label = "소비 속도: 안정적 / 여유로움"
             speed_color = "#10B981"
-            forecast_label = "현재 속도 유지 시 초기화 전 소진 위험 없음"
+            forecast_label = (
+                f"{reset_clock} 리셋 전 소진 위험 없음"
+                if reset_clock
+                else "현재 속도 유지 시 초기화 전 소진 위험 없음"
+            )
             is_fast = False
         elif burn_rate <= 6.0:
             speed_label = f"소비 속도: 보통 ({burn_rate:.1f}%/h)"
             speed_color = "#10B981"
             hours_left = last_rem / burn_rate if burn_rate > 0 else 999
-            forecast_label = f"현재 소비 속도 기준 약 {hours_left:.1f}시간 사용 가능"
+            deplete_ts = time.time() + hours_left * 3600.0
+            if reset_ts and deplete_ts >= reset_ts:
+                forecast_label = f"{reset_clock} 리셋까지 여유 충분 (약 {hours_left:.1f}시간분)"
+            else:
+                deplete_clock = format_clock_time(deplete_ts, lang=lang)
+                forecast_label = f"약 {deplete_clock}경 소진 예상 (약 {hours_left:.1f}시간 사용 가능)"
             is_fast = False
         elif burn_rate <= 15.0:
             speed_label = f"소비 속도: 다소 빠름 ({burn_rate:.1f}%/h) ⚡"
             speed_color = "#F59E0B"
             hours_left = last_rem / burn_rate if burn_rate > 0 else 999
-            forecast_label = f"주의: 약 {hours_left:.1f}시간 내 소진될 수 있음"
+            deplete_ts = time.time() + hours_left * 3600.0
+            deplete_clock = format_clock_time(deplete_ts, lang=lang)
+            forecast_label = f"주의: 약 {deplete_clock}경 소진 가능 (약 {hours_left:.1f}시간 남음)"
             is_fast = True
         else:
             speed_label = f"소비 속도: 매우 빠름 ({burn_rate:.1f}%/h) 🔥"
             speed_color = "#EF4444"
             hours_left = last_rem / burn_rate if burn_rate > 0 else 999
-            forecast_label = f"경고: 빠른 소비로 약 {hours_left:.1f}시간 내 소진 예상"
+            deplete_ts = time.time() + hours_left * 3600.0
+            deplete_clock = format_clock_time(deplete_ts, lang=lang)
+            forecast_label = f"경고: 약 {deplete_clock}경 소진 예상 (약 {hours_left:.1f}시간 내)"
             is_fast = True
 
         return {
